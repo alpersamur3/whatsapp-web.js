@@ -350,6 +350,8 @@ declare namespace WAWebJS {
                 waitForAnswer?: boolean;
                 answerTimeout?: number;
                 injectAudio?: boolean;
+                orientation?: 'landscape' | 'portrait' | 'auto';
+                resolution?: number;
             },
         ): Promise<Call>;
 
@@ -2460,6 +2462,8 @@ declare namespace WAWebJS {
         accept: (options?: {
             video?: boolean;
             injectAudio?: boolean;
+            orientation?: 'landscape' | 'portrait' | 'auto';
+            resolution?: number;
         }) => Promise<boolean>;
 
         /** End an ongoing call */
@@ -2467,6 +2471,18 @@ declare namespace WAWebJS {
 
         /** Play an audio clip into the ongoing call so the other party can hear it */
         playAudio: (media: MessageMedia | string) => Promise<number>;
+
+        /** Show a still image to the other party for the duration of a video call */
+        showImage: (media: MessageMedia | string) => Promise<boolean>;
+
+        /** Play a video clip into the ongoing video call so the other party can see it */
+        playVideo: (
+            media: MessageMedia | string,
+            options?: { loop?: boolean },
+        ) => Promise<number>;
+
+        /** Change the outgoing video resolution (the short side, in pixels) during a call */
+        setVideoResolution: (resolution: number) => Promise<boolean>;
 
         /** Indicates whether the call is currently connected (the other party has answered) */
         isConnected: () => Promise<boolean>;
