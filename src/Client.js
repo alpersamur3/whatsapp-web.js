@@ -3337,17 +3337,20 @@ class Client extends EventEmitter {
      * @param {boolean} [options.waitForAnswer=false] If true, waits until the callee answers (or the timeout elapses) before resolving
      * @param {number} [options.answerTimeout=60000] Maximum time to wait for an answer, in milliseconds, when waitForAnswer is true
      * @param {boolean} [options.injectAudio=true] Route the outgoing audio from injected clips (via Call.playAudio) instead of the real microphone. Set false to place a normal call
+     * @param {string} [options.orientation='landscape'] Video frame orientation, either 'landscape', 'portrait' or 'auto' (follows the first source). Fixed for the whole call
+     * @param {number} [options.resolution=720] Video frame resolution (the short side, in pixels)
      * @returns {Promise<Call>} The placed call
      */
     async call(chatId, options = {}) {
         const callData = await this.pupPage.evaluate(
-            (id, isVideo, waitForAnswer, answerTimeout, injectAudio) => {
+            (id, isVideo, waitForAnswer, answerTimeout, injectAudio, video) => {
                 return window.WWebJS.startCall(
                     id,
                     isVideo,
                     waitForAnswer,
                     answerTimeout,
                     injectAudio,
+                    video,
                 );
             },
             chatId,
@@ -3355,6 +3358,10 @@ class Client extends EventEmitter {
             options.waitForAnswer ?? false,
             options.answerTimeout ?? 60000,
             options.injectAudio ?? true,
+            {
+                orientation: options.orientation,
+                resolution: options.resolution,
+            },
         );
 
         return new Call(this, callData);

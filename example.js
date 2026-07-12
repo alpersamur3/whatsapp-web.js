@@ -712,6 +712,17 @@ client.on('call', async (call) => {
 //     await call.end();
 // }
 
+// Placing a video call and showing an image or playing a video clip into it
+// (requires Google Chrome, video is not supported on plain Chromium). The frame
+// orientation is fixed for the call; the resolution can be changed on the fly:
+// const videoCall = await client.call('1234567890', { video: true, orientation: 'portrait', waitForAnswer: true });
+// if (await videoCall.isConnected()) {
+//     await videoCall.showImage(MessageMedia.fromFilePath('./logo.png'));
+//     await videoCall.setVideoResolution(480);
+//     await videoCall.playVideo(MessageMedia.fromFilePath('./clip.mp4'), { loop: true });
+//     await videoCall.end();
+// }
+
 // Checking for an ongoing call and hanging it up:
 // const activeCall = await client.getActiveCall();
 // if (activeCall) await activeCall.end();
