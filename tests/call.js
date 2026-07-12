@@ -6,6 +6,8 @@ const Client = require('../src/Client');
 
 const expect = chai.expect;
 
+const noVideo = { orientation: undefined, resolution: undefined };
+
 // These are unit tests: the injected browser functions run inside WhatsApp Web,
 // so the pupPage.evaluate calls are stubbed and only the API surface (the
 // arguments handed to the injected layer) is asserted. No live session needed.
@@ -43,21 +45,42 @@ describe('Calls', function () {
                 expect(client.pupPage.evaluate.calledOnce).to.equal(true);
                 const args = client.pupPage.evaluate.firstCall.args;
                 expect(args[0]).to.be.a('function');
-                expect(args.slice(1)).to.deep.equal(['call-id', false, true]);
+                expect(args.slice(1)).to.deep.equal([
+                    'call-id',
+                    false,
+                    true,
+                    noVideo,
+                ]);
             });
 
             it('answers with video when requested', async function () {
                 await call.accept({ video: true });
                 expect(
                     client.pupPage.evaluate.firstCall.args.slice(1),
-                ).to.deep.equal(['call-id', true, true]);
+                ).to.deep.equal(['call-id', true, true, noVideo]);
             });
 
             it('can disable audio injection to use the real microphone', async function () {
                 await call.accept({ injectAudio: false });
                 expect(
                     client.pupPage.evaluate.firstCall.args.slice(1),
-                ).to.deep.equal(['call-id', false, false]);
+                ).to.deep.equal(['call-id', false, false, noVideo]);
+            });
+
+            it('forwards the video orientation and resolution', async function () {
+                await call.accept({
+                    video: true,
+                    orientation: 'portrait',
+                    resolution: 480,
+                });
+                expect(
+                    client.pupPage.evaluate.firstCall.args.slice(1),
+                ).to.deep.equal([
+                    'call-id',
+                    true,
+                    true,
+                    { orientation: 'portrait', resolution: 480 },
+                ]);
             });
         });
 
@@ -95,6 +118,40 @@ describe('Calls', function () {
                 expect(
                     client.pupPage.evaluate.firstCall.args.slice(1),
                 ).to.deep.equal(['MEDIA64']);
+            });
+        });
+
+        describe('showImage', function () {
+            it('defaults the mimetype for a base64 string', async function () {
+                await call.showImage('IMG64');
+                expect(
+                    client.pupPage.evaluate.firstCall.args.slice(1),
+                ).to.deep.equal(['IMG64', 'image/jpeg']);
+            });
+
+            it('forwards a MessageMedia mimetype', async function () {
+                await call.showImage({ mimetype: 'image/png', data: 'PNG64' });
+                expect(
+                    client.pupPage.evaluate.firstCall.args.slice(1),
+                ).to.deep.equal(['PNG64', 'image/png']);
+            });
+        });
+
+        describe('playVideo', function () {
+            it('defaults the mimetype and passes the options', async function () {
+                await call.playVideo('VID64', { loop: true });
+                expect(
+                    client.pupPage.evaluate.firstCall.args.slice(1),
+                ).to.deep.equal(['VID64', 'video/mp4', { loop: true }]);
+            });
+        });
+
+        describe('setVideoResolution', function () {
+            it('forwards the resolution', async function () {
+                await call.setVideoResolution(720);
+                expect(
+                    client.pupPage.evaluate.firstCall.args.slice(1),
+                ).to.deep.equal([720]);
             });
         });
 
@@ -142,19 +199,29 @@ describe('Calls', function () {
                 false,
                 60000,
                 true,
+                noVideo,
             ]);
         });
 
-        it('forwards video, waitForAnswer, answerTimeout and injectAudio', async function () {
+        it('forwards video, waitForAnswer, answerTimeout, injectAudio and video options', async function () {
             await Client.prototype.call.call(client, '15551234567', {
                 video: true,
                 waitForAnswer: true,
                 answerTimeout: 1000,
                 injectAudio: false,
+                orientation: 'portrait',
+                resolution: 480,
             });
             expect(
                 client.pupPage.evaluate.firstCall.args.slice(1),
-            ).to.deep.equal(['15551234567', true, true, 1000, false]);
+            ).to.deep.equal([
+                '15551234567',
+                true,
+                true,
+                1000,
+                false,
+                { orientation: 'portrait', resolution: 480 },
+            ]);
         });
     });
 });
