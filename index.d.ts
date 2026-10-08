@@ -2468,6 +2468,12 @@ declare namespace WAWebJS {
         /** Play an audio clip into the ongoing call so the other party can hear it */
         playAudio: (media: MessageMedia | string) => Promise<number>;
 
+        /** Play live raw 16-bit little-endian mono PCM into the ongoing call as it arrives. Destroying the stream stops the playback */
+        playAudioStream: (
+            stream: Readable,
+            options?: { sampleRate?: number },
+        ) => Promise<number>;
+
         /** Indicates whether the call is currently connected (the other party has answered) */
         isConnected: () => Promise<boolean>;
 

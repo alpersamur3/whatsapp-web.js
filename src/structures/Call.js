@@ -7,6 +7,8 @@ const MessageMedia = require('./MessageMedia');
 // Call audio is captured as WhatsApp plays it: 16-bit PCM, mono, 16 kHz
 const CALL_AUDIO_SAMPLE_RATE = 16000;
 
+let audioStreamCount = 0;
+
 /**
  * Represents a Call on WhatsApp
  * @extends {Base}
@@ -119,6 +121,90 @@ class Call extends Base {
         return this.client.pupPage.evaluate((base64) => {
             return window.WWebJS.playCallAudio(base64);
         }, data);
+    }
+
+    /**
+     * Play live audio into the ongoing call as it arrives, e.g. speech from a streaming
+     * text-to-speech service or audio bridged from another source. The stream must carry
+     * raw 16-bit little-endian PCM, mono. Destroying the stream stops the playback right
+     * away; the stream itself is left open if the call ends first
+     * @param {Readable} stream The audio to play
+     * @param {object} [options] Playback options
+     * @param {number} [options.sampleRate=16000] Sample rate of the audio in the stream
+     * @returns {Promise<number>} The duration of the audio handed to the call, in seconds
+     */
+    async playAudioStream(stream, options = {}) {
+        const sampleRate = options.sampleRate ?? CALL_AUDIO_SAMPLE_RATE;
+        const streamId = `${this.id}-${++audioStreamCount}`;
+        const page = this.client.pupPage;
+        await page.evaluate(
+            (id, rate) => {
+                return window.WWebJS.startCallAudioStream(id, rate);
+            },
+            streamId,
+            sampleRate,
+        );
+
+        const stop = (interrupt) =>
+            page.evaluate(
+                (id, cut) => {
+                    return window.WWebJS.endCallAudioStream(id, cut);
+                },
+                streamId,
+                interrupt,
+            );
+        const onClose = () => {
+            if (!stream.readableEnded) stop(true).catch(() => {});
+        };
+        stream.once('close', onClose);
+
+        let pending = Buffer.alloc(0);
+        let played = 0;
+        try {
+            for await (const chunk of stream.iterator({
+                destroyOnReturn: false,
+            })) {
+                pending = pending.length
+                    ? Buffer.concat([pending, chunk])
+                    : chunk;
+                const usable = pending.length - (pending.length % 2);
+                if (!usable) continue;
+                const data = pending.subarray(0, usable);
+                pending = pending.subarray(usable);
+
+                const queued = await page.evaluate(
+                    (id, base64) => {
+                        return window.WWebJS.pushCallAudio(id, base64);
+                    },
+                    streamId,
+                    data.toString('base64'),
+                );
+                if (queued === false) break;
+                played += usable;
+                // Stay about a second ahead, so a source that produces audio
+                // faster than real time is paced instead of queued up front.
+                if (queued > 1) {
+                    await new Promise((resolve) =>
+                        setTimeout(resolve, (queued - 1) * 1000),
+                    );
+                }
+            }
+        } catch (err) {
+            if (!stream.destroyed || stream.errored) {
+                await stop(true).catch(() => {});
+                throw err;
+            }
+        } finally {
+            stream.off('close', onClose);
+        }
+
+        const remaining = await stop(stream.destroyed && !stream.readableEnded);
+        if (remaining > 0) {
+            await new Promise((resolve) =>
+                setTimeout(resolve, remaining * 1000),
+            );
+        }
+        return played / 2 / sampleRate;
     }
 
     /**

@@ -1,5 +1,6 @@
 const chai = require('chai');
 const sinon = require('sinon');
+const { Readable } = require('stream');
 
 const Call = require('../src/structures/Call');
 const Client = require('../src/Client');
@@ -109,6 +110,107 @@ describe('Calls', function () {
                 expect(
                     client.pupPage.evaluate.firstCall.args.slice(1),
                 ).to.deep.equal(['call-id']);
+            });
+        });
+
+        describe('playAudioStream', function () {
+            // Routes the stubbed page calls by the injected function they run.
+            const page = ({ queued = 0.2, remaining = 0 } = {}) => {
+                const calls = { start: [], push: [], end: [] };
+                client.pupPage.evaluate = sinon
+                    .stub()
+                    .callsFake(async (fn, ...args) => {
+                        const source = fn.toString();
+                        if (source.includes('startCallAudioStream')) {
+                            calls.start.push(args);
+                            return true;
+                        }
+                        if (source.includes('pushCallAudio')) {
+                            calls.push.push(args);
+                            return queued;
+                        }
+                        calls.end.push(args);
+                        return remaining;
+                    });
+                return calls;
+            };
+            const sent = (calls) =>
+                Buffer.concat(
+                    calls.push.map(([, data]) => Buffer.from(data, 'base64')),
+                );
+
+            it('sends whole 16-bit samples at the given sample rate', async function () {
+                const calls = page();
+                const stream = Readable.from([
+                    Buffer.from([1, 2, 3]),
+                    Buffer.from([4, 5, 6, 7]),
+                ]);
+                const seconds = await call.playAudioStream(stream, {
+                    sampleRate: 8000,
+                });
+
+                expect(calls.start[0][1]).to.equal(8000);
+                for (const [, data] of calls.push) {
+                    expect(Buffer.from(data, 'base64').length % 2).to.equal(0);
+                }
+                expect(sent(calls)).to.deep.equal(
+                    Buffer.from([1, 2, 3, 4, 5, 6]),
+                );
+                expect(seconds).to.equal(6 / 2 / 8000);
+                expect(calls.end[0][1]).to.equal(false);
+            });
+
+            it('defaults to 16 kHz and waits for the queued audio to play out', async function () {
+                const calls = page({ remaining: 0.05 });
+                const started = Date.now();
+                await call.playAudioStream(Readable.from([Buffer.alloc(4)]));
+
+                expect(calls.start[0][1]).to.equal(16000);
+                expect(Date.now() - started).to.be.at.least(40);
+            });
+
+            it('stops when the call ends and leaves the stream open', async function () {
+                const calls = page({ queued: false });
+                const stream = new Readable({ read() {} });
+                stream.push(Buffer.alloc(4));
+                const seconds = await call.playAudioStream(stream);
+
+                expect(seconds).to.equal(0);
+                expect(stream.destroyed).to.equal(false);
+                expect(calls.end[0][1]).to.equal(false);
+            });
+
+            it('cuts the playback off when the stream is destroyed', async function () {
+                const calls = page();
+                const stream = new Readable({ read() {} });
+                stream.push(Buffer.alloc(4));
+                const playing = call.playAudioStream(stream);
+                await tick();
+                stream.destroy();
+                await playing;
+
+                expect(calls.end.some(([, interrupt]) => interrupt)).to.equal(
+                    true,
+                );
+            });
+
+            it('rejects and cuts the playback off when the stream fails', async function () {
+                const calls = page();
+                const stream = new Readable({ read() {} });
+                const playing = call.playAudioStream(stream);
+                await tick();
+                stream.destroy(new Error('tts failed'));
+
+                let error;
+                try {
+                    await playing;
+                } catch (err) {
+                    error = err;
+                }
+                expect(error.message).to.equal('tts failed');
+                expect(calls.end.some(([, interrupt]) => interrupt)).to.equal(
+                    true,
+                );
             });
         });
 

@@ -728,6 +728,12 @@ client.on('call', async (call) => {
 // const audio = await call.getAudioStream();
 // audio.on('data', (pcm) => transcriber.write(pcm));
 
+// Playing live audio as it is produced, e.g. a streaming text-to-speech reply
+// (raw 16-bit mono PCM). Destroying the stream stops it, e.g. when the caller
+// starts talking over it:
+// const reply = tts.stream('Hello, how can I help?'); // a Readable of PCM
+// await call.playAudioStream(reply, { sampleRate: 24000 });
+
 client.on('disconnected', (reason) => {
     console.log('Client was logged out', reason);
 });

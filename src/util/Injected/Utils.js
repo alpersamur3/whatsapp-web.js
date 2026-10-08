@@ -1423,6 +1423,11 @@ exports.LoadUtils = () => {
     window.WWebJS.teardownCallMediaStream = () => {
         const media = window.WWebJS._callMedia;
         window.WWebJS._callMediaActive = false;
+        for (const streamId of Object.keys(
+            window.WWebJS._callAudioPlayback || {},
+        )) {
+            window.WWebJS.endCallAudioStream(streamId, true);
+        }
         if (!media) return;
 
         // Detach the destinations handed out during the call so the next call
@@ -1458,6 +1463,84 @@ exports.LoadUtils = () => {
             source.onended = () => resolve(buffer.duration);
             source.start();
         });
+    };
+
+    // Live audio is played as consecutive buffers on the injection graph. A
+    // short lead absorbs the jitter between incoming chunks; when the queue
+    // runs dry, playback restarts with the same lead.
+    window.WWebJS.startCallAudioStream = async (streamId, sampleRate) => {
+        const { context } = window.WWebJS.setupCallMediaStream();
+        if (context.state === 'suspended') {
+            await context.resume();
+        }
+        window.WWebJS._callAudioPlayback =
+            window.WWebJS._callAudioPlayback || {};
+        window.WWebJS._callAudioPlayback[streamId] = {
+            sampleRate,
+            nextTime: 0,
+            sources: new Set(),
+        };
+        return true;
+    };
+
+    // Returns how many seconds of audio are queued, or false once the stream
+    // has been stopped (it was interrupted or the call ended).
+    window.WWebJS.pushCallAudio = (streamId, base64) => {
+        const playback = (window.WWebJS._callAudioPlayback || {})[streamId];
+        if (!playback) {
+            return false;
+        }
+        if (!window.require('WAWebCallCollection').activeCall) {
+            window.WWebJS.endCallAudioStream(streamId, true);
+            return false;
+        }
+
+        const { context, master } = window.WWebJS._callMedia;
+        const binary = atob(base64);
+        const samples = new Float32Array(binary.length / 2);
+        for (let i = 0; i < samples.length; i++) {
+            const value =
+                binary.charCodeAt(i * 2) | (binary.charCodeAt(i * 2 + 1) << 8);
+            samples[i] = (value >= 0x8000 ? value - 0x10000 : value) / 0x8000;
+        }
+        const buffer = context.createBuffer(
+            1,
+            samples.length,
+            playback.sampleRate,
+        );
+        buffer.copyToChannel(samples, 0);
+
+        const source = context.createBufferSource();
+        source.buffer = buffer;
+        source.connect(master);
+        const now = context.currentTime;
+        if (playback.nextTime < now) {
+            playback.nextTime = now + 0.1;
+        }
+        source.start(playback.nextTime);
+        playback.nextTime += buffer.duration;
+        playback.sources.add(source);
+        source.onended = () => playback.sources.delete(source);
+        return playback.nextTime - now;
+    };
+
+    // Stops taking new audio for the stream. With interrupt the queued audio is
+    // cut off; otherwise it plays out and the seconds left are returned.
+    window.WWebJS.endCallAudioStream = (streamId, interrupt = false) => {
+        const playbacks = window.WWebJS._callAudioPlayback || {};
+        const playback = playbacks[streamId];
+        if (!playback) {
+            return 0;
+        }
+        delete playbacks[streamId];
+        if (interrupt) {
+            for (const source of playback.sources) {
+                source.stop();
+            }
+            return 0;
+        }
+        const { context } = window.WWebJS._callMedia;
+        return Math.max(0, playback.nextTime - context.currentTime);
     };
 
     // The peer connections of a call only carry data channels: the far end's
