@@ -716,6 +716,18 @@ client.on('call', async (call) => {
 // const activeCall = await client.getActiveCall();
 // if (activeCall) await activeCall.end();
 
+// Answering machine: play a greeting, then record what the caller says
+// (16 kHz mono WAV) until they hang up or a minute passes:
+// await call.accept();
+// await call.playAudio(MessageMedia.fromFilePath('./greeting.mp3'));
+// const recording = await call.recordAudio({ maxDuration: 60000 });
+// await client.sendMessage(myNumber, recording);
+
+// Streaming the other party's audio live, as raw 16-bit PCM at 16 kHz mono
+// (e.g. to feed a speech-to-text service):
+// const audio = await call.getAudioStream();
+// audio.on('data', (pcm) => transcriber.write(pcm));
+
 client.on('disconnected', (reason) => {
     console.log('Client was logged out', reason);
 });

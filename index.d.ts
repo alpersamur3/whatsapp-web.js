@@ -2470,6 +2470,14 @@ declare namespace WAWebJS {
 
         /** Indicates whether the call is currently connected (the other party has answered) */
         isConnected: () => Promise<boolean>;
+
+        /** Live stream of the audio the other party sends, as raw 16-bit little-endian PCM, mono, 16 kHz. Ends with the call */
+        getAudioStream: () => Promise<Readable>;
+
+        /** Records the audio the other party sends until the call ends (or maxDuration elapses) and returns it as a WAV file */
+        recordAudio: (options?: {
+            maxDuration?: number;
+        }) => Promise<MessageMedia>;
     }
 
     /** Message type List */

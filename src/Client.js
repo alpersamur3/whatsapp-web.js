@@ -104,6 +104,9 @@ class Client extends EventEmitter {
         this.currentIndexHtml = null;
         this.lastLoggedOut = false;
 
+        // Live call audio streams by call id (see Call#getAudioStream)
+        this._callAudioStreams = new Map();
+
         Util.setFfmpegPath(this.options.ffmpegPath);
     }
 
@@ -965,6 +968,32 @@ class Client extends EventEmitter {
 
         await exposeFunctionIfAbsent(
             this.pupPage,
+            'onCallAudioChunk',
+            (callId, data) => {
+                const streams = this._callAudioStreams.get(callId);
+                if (!streams) return;
+                const chunk = Buffer.from(data, 'base64');
+                for (const stream of streams) {
+                    stream.push(chunk);
+                }
+            },
+        );
+
+        await exposeFunctionIfAbsent(
+            this.pupPage,
+            'onCallAudioEnd',
+            (callId) => {
+                const streams = this._callAudioStreams.get(callId);
+                if (!streams) return;
+                this._callAudioStreams.delete(callId);
+                for (const stream of streams) {
+                    stream.push(null);
+                }
+            },
+        );
+
+        await exposeFunctionIfAbsent(
+            this.pupPage,
             'onReaction',
             (reactions) => {
                 for (const reaction of reactions) {
@@ -1183,6 +1212,7 @@ class Client extends EventEmitter {
                                 call.getState() === 0)
                         ) {
                             window.WWebJS.teardownCallMediaStream?.();
+                            window.WWebJS.stopCallAudioCaptures?.();
                         }
                     });
                 }

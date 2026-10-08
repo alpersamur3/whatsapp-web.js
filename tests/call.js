@@ -24,7 +24,10 @@ describe('Calls', function () {
         let call;
 
         beforeEach(function () {
-            client = { pupPage: { evaluate: sinon.stub().resolves(true) } };
+            client = {
+                pupPage: { evaluate: sinon.stub().resolves(true) },
+                _callAudioStreams: new Map(),
+            };
             call = new Call(client, callData);
         });
 
@@ -106,6 +109,129 @@ describe('Calls', function () {
                 expect(
                     client.pupPage.evaluate.firstCall.args.slice(1),
                 ).to.deep.equal(['call-id']);
+            });
+        });
+
+        // The injected capture reports through Client's onCallAudioChunk and
+        // onCallAudioEnd handlers; these mirror what they do with the streams.
+        const deliver = (chunk) => {
+            for (const stream of client._callAudioStreams.get('call-id')) {
+                stream.push(chunk);
+            }
+        };
+        const endCall = () => {
+            const streams = client._callAudioStreams.get('call-id');
+            client._callAudioStreams.delete('call-id');
+            for (const stream of streams) stream.push(null);
+        };
+        const tick = () => new Promise((resolve) => setImmediate(resolve));
+
+        describe('getAudioStream', function () {
+            it('starts the capture for the call and registers the stream', async function () {
+                const stream = await call.getAudioStream();
+                expect(
+                    client.pupPage.evaluate.firstCall.args.slice(1),
+                ).to.deep.equal(['call-id']);
+                expect(
+                    client._callAudioStreams.get('call-id').has(stream),
+                ).to.equal(true);
+            });
+
+            it('delivers the captured audio and ends with the call', async function () {
+                const stream = await call.getAudioStream();
+                const received = [];
+                stream.on('data', (chunk) => received.push(chunk));
+                const ended = new Promise((resolve) =>
+                    stream.on('end', resolve),
+                );
+
+                deliver(Buffer.from([1, 2]));
+                deliver(Buffer.from([3, 4]));
+                endCall();
+                await ended;
+
+                expect(Buffer.concat(received)).to.deep.equal(
+                    Buffer.from([1, 2, 3, 4]),
+                );
+            });
+
+            it('stops the capture without an end notification when destroyed', async function () {
+                const stream = await call.getAudioStream();
+                stream.destroy();
+                await tick();
+
+                expect(client._callAudioStreams.has('call-id')).to.equal(false);
+                const stop = client.pupPage.evaluate.secondCall.args;
+                expect(stop.slice(1)).to.deep.equal(['call-id']);
+                expect(stop[0].toString()).to.include(
+                    'stopCallAudioCapture(id, false)',
+                );
+            });
+
+            it('keeps the capture running while another stream is open', async function () {
+                const first = await call.getAudioStream();
+                await call.getAudioStream();
+                first.destroy();
+                await tick();
+
+                expect(client.pupPage.evaluate.callCount).to.equal(2);
+                expect(client._callAudioStreams.get('call-id').size).to.equal(
+                    1,
+                );
+            });
+
+            it('rejects and cleans up when the call is not ongoing', async function () {
+                client.pupPage.evaluate.resolves(false);
+                let error;
+                try {
+                    await call.getAudioStream();
+                } catch (err) {
+                    error = err;
+                }
+                await tick();
+
+                expect(error.message).to.equal('The call is not ongoing');
+                expect(client._callAudioStreams.has('call-id')).to.equal(false);
+            });
+        });
+
+        describe('recordAudio', function () {
+            it('returns the received audio as a 16 kHz mono WAV when the call ends', async function () {
+                const recording = call.recordAudio();
+                const pcm = Buffer.from([0x10, 0x00, 0xf0, 0xff, 0x00, 0x40]);
+                deliver(pcm);
+                endCall();
+                const media = await recording;
+
+                expect(media.mimetype).to.equal('audio/wav');
+                expect(media.filename).to.equal('call-call-id.wav');
+                const wav = Buffer.from(media.data, 'base64');
+                expect(wav.toString('ascii', 0, 4)).to.equal('RIFF');
+                expect(wav.readUInt32LE(4)).to.equal(36 + pcm.length);
+                expect(wav.toString('ascii', 8, 16)).to.equal('WAVEfmt ');
+                expect(wav.readUInt16LE(20)).to.equal(1);
+                expect(wav.readUInt16LE(22)).to.equal(1);
+                expect(wav.readUInt32LE(24)).to.equal(16000);
+                expect(wav.readUInt32LE(28)).to.equal(32000);
+                expect(wav.readUInt16LE(32)).to.equal(2);
+                expect(wav.readUInt16LE(34)).to.equal(16);
+                expect(wav.toString('ascii', 36, 40)).to.equal('data');
+                expect(wav.readUInt32LE(40)).to.equal(pcm.length);
+                expect(wav.subarray(44)).to.deep.equal(pcm);
+            });
+
+            it('stops after maxDuration and releases the capture', async function () {
+                const recording = call.recordAudio({ maxDuration: 20 });
+                deliver(Buffer.from([1, 0]));
+                const media = await recording;
+
+                const wav = Buffer.from(media.data, 'base64');
+                expect(wav.readUInt32LE(40)).to.equal(2);
+                await tick();
+                expect(client._callAudioStreams.has('call-id')).to.equal(false);
+                expect(
+                    client.pupPage.evaluate.secondCall.args[0].toString(),
+                ).to.include('stopCallAudioCapture');
             });
         });
     });
